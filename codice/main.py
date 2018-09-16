@@ -18,8 +18,6 @@ def str2bool(v):
 parser = argparse.ArgumentParser(
     description='NLP HW3 main')
 
-# /media/jary/DATA/Uni/NLP/17-18/HWs/HW3/SRLData/EN/CoNLL2009-ST-English-train.txt /media/jary/DATA/Uni/NLP/17-18/HWs/HW3/SRLData/EN/dis_CoNLL2009-ST-English-train.txt /media/jary/DATA/Uni/NLP/17-18/HWs/HW3/SRLData/EN/CoNLL2009-ST-English-development.txt '/media/jary/DATA/Uni/NLP/17-18/HWs/HW3/SRLData/EN/dis_CoNLL2009-ST-English-development.txt ../embeddings/w2v.json ../embeddings/nasari.json --model_json ./model.json,
-
 parser.add_argument("--train_dataset",
                     metavar="<command>", type=str,
                     help='path of the train dataset')
@@ -49,20 +47,25 @@ parser.add_argument('--model_json', required=False,
                     metavar="path to json containing model hyperparams and arguments",
                     help='Model json path')
 
-parser.add_argument('--to_train', required=False,
+parser.add_argument('--train', required=False,
                     default='y', type=str2bool,
                     metavar="path to json containing model hyperparams and arguments",
                     help='Model json path')
 
-# parser.add_argument('--test_dataset', required=False,
-#                     default=None, type=str,
-#                     metavar="path to json containing model hyperparams and arguments",
-#                     help='Model json path')
-#
-# parser.add_argument('--test_syn', required=False,
-#                     default='y', type=str,
-#                     metavar="path to json containing model hyperparams and arguments",
-#                     help='Model json path')
+parser.add_argument('--study', required=False,
+                    default='f', type=str2bool,
+                    metavar="path to json containing model hyperparams and arguments",
+                    help='Model json path')
+
+parser.add_argument('--test_dataset', required=False,
+                    default=None, type=str,
+                    metavar="path to json containing model hyperparams and arguments",
+                    help='Model json path')
+
+parser.add_argument('--test_syn', required=False,
+                    default=None, type=str,
+                    metavar="path to json containing model hyperparams and arguments",
+                    help='Model json path')
 
 args = parser.parse_args()
 
@@ -77,7 +80,11 @@ if args.model_json is not None:
 
 lstm = MLP(dataset=d, **model)
 
-if args.to_train:
+if args.train:
     lstm.train()
 
-lstm.study_results()
+if args.study:
+    lstm.study_results()
+
+if args.test_dataset is not None and args.test_syn is not None:
+    d.evaluate_test_data(lstm, args.test_dataset, args.test_syn)

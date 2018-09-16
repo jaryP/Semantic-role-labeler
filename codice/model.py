@@ -13,11 +13,28 @@ from sklearn.metrics import confusion_matrix as cm
 class MLP:
     def __init__(self, dataset, **kwargs):
 
-        self.hyper = {'layers_size': [300, 300], 'w_emb': 100, 'l_emb': 100, 'ensemble': False, "tolerance": 5,
-                      'rnn_cell_type': "lstm", 'use_intermediate_states': 0, 'crf': False, 'layers_type': 'rnn',
-                      'pos_emb': 16, 'lr': 0.01, 'dropout': 0.2, 'incorporate_predicate_emb': False,
-                      'use_attention': False, 'attention_heads': 1, 'batch_size': 64, 'to_load': False,
-                      'gradient_clip': True, 'log_dir': None, 'epochs': 5, 'n_words': dataset.words_len,
+        #default parameter are the best model
+        self.hyper = {
+                      "rnn_cell_type": "lstm",
+                      "layers_type": "rnn",
+                      "layers_size": [512, 512, 512],
+                      "use_intermediate_states": 0,
+                      "w_emb": 100,
+                      "lr": 1e-3,
+                      "dropout": 0.2,
+                      "pos_emb": 16,
+                      "incremental": 1,
+                      "incorporate_predicate_emb": 0,
+                      "use_attention": 1,
+                      "layers_attention": -1,
+                      "attention_heads": 16,
+                      "batch_size": 40,
+                      "to_load": 1,
+                      "gradient_clip": 1,
+                      "log_dir":
+                      "/media/jary/DATA/Uni/NLP/17-18/HWs/HW3/logs/report/final",
+                      "epochs": 20,
+                      'log_dir': None, 'epochs': 5, 'n_words': dataset.words_len,
                       'n_pos': dataset.pos_len, 'n_roles': dataset.roles_len, 'n_lemmas': dataset.lemma_len}
 
         self.hyper.update(**kwargs)
@@ -51,6 +68,9 @@ class MLP:
         print({k: v for k, v in self.back_dict.items() if k != 'results'})
 
     def load(self, epoch=None, best_one=False):
+        '''
+        load a saved network
+        '''
         try:
             saver = tf.train.Saver()
 
@@ -79,6 +99,9 @@ class MLP:
             print(e)
 
     def train(self):
+        '''
+        Train the network on train dataset and evaluate it after each epoch on dev dataset
+        '''
 
         if self.back_dict['tolerance'] == 0 or self.back_dict['epoch'] > self.back_dict['epochs']:
             return
@@ -109,7 +132,6 @@ class MLP:
                                                                                self.back_dict['tolerance']))
 
             batches = 0
-            tot_loss = 0
             losses = []
 
             batcher = self.dataset.get_train_batch if self.hyper['incremental'] == 0 else \
@@ -164,6 +186,9 @@ class MLP:
         writer.close()
 
     def batch_to_feed(self, batch, training=True):
+        '''
+        Given a batch create the feed dict to be passed to the network
+        '''
         (word_index, pos_index, predicate_index, labels, lengths, w2v_index, lemma_index) = batch
         feed_dict = {
             self.w_in: word_index,
@@ -179,10 +204,15 @@ class MLP:
         return feed_dict
 
     def forward(self, batch):
+        '''
+        calculate the forwad pass of the network
+        '''
         return self._session.run(self.prediction, feed_dict=self.batch_to_feed(batch, False))
 
     def get_dataset_score(self, dataset='dev'):
-
+        '''
+        Get the score associated for a given dataset: train or dev
+        '''
         correct_labeled = 0
         correct_unlabeled = 0
         num_predicted = 0
@@ -190,8 +220,6 @@ class MLP:
 
         for batch in self.dataset.get_all_dataset(dataset, batch=self.hyper['batch_size']):
 
-            # feed = self.batch_to_feed(batch, training=False)
-            # val = self._session.run(self.prediction, feed_dict=feed)
             val = self.forward(batch)
             y = batch[3]
             s = y.shape
@@ -225,15 +253,18 @@ class MLP:
                 'unlabeled': {'precision': un_precision*100, 'recall': un_recall*100, 'f1': un_f1*100}}
 
     def study_results(self):
+        '''
+        function that create and plot or print different evaluation on the dev dataset
+        '''
 
         def calculate_score(res):
             p = 0 if 'predicted' not in res or res['predicted'] == 0 else res['correct_labeled'] / res['predicted']
             r = 0 if 'gold' not in res or res['gold'] == 0 else res['correct_labeled'] / res['gold']
             f1 = 0 if p == r == 0 else (2 * p * r / (p + r))
 
-            return p*100, r*100, f1*100
+            return p * 100, r * 100, f1 * 100
 
-        def save_confusion_matrix(g, p):
+        def save_confusion_matrix(g, p, name='confusion_matrix'):
             classes = [k for k, v in self.dataset.role_id_map.items() if v in set(g) | set(p)]
             plt.figure(figsize=(18, 18))
             confusion_matrix = cm(g, p)
@@ -256,7 +287,7 @@ class MLP:
             plt.xticks(tick_marks, classes, rotation=45)
             plt.yticks(tick_marks, classes)
             plt.yticks(fontsize=12)
-            plt.savefig(os.path.join(self.log_dir, 'confusion_matrix.png'), bbox_inches='tight')
+            plt.savefig(os.path.join(self.log_dir, '{}.png'.format(name)), bbox_inches='tight')
 
         def save_distance_plot(d):
 
@@ -299,7 +330,8 @@ class MLP:
             plt.tight_layout()
             plt.xlabel('Distance from predicate')
             plt.ylabel('F1 score')
-            xlabel = ['{}\n{:.2f}%'.format(c, (keys_map_occurrence[v] / total) * 100) for c, v in keys_map.items()]
+            # xlabel = ['{}\n{:.2f}%'.format(c, (keys_map_occurrence[v] / total) * 100) for c, v in keys_map.items()]
+            xlabel = ['{}'.format(c) for c, v in keys_map.items()]
             plt.xticks(x, xlabel, rotation=45)
             plt.savefig(os.path.join(self.log_dir, 'score_varying_distance.png'), bbox_inches='tight')
             plt.close()
@@ -343,15 +375,16 @@ class MLP:
             plt.plot(x, rcs, label='recall')
             plt.legend()
             plt.tight_layout()
-            plt.xlabel('Distance from predicate')
+            plt.xlabel('Score based on sentence length')
             plt.ylabel('F1 score')
-            xlabel = ['{}\n{:.2f}%'.format(c, (keys_map_occurrence[v] / total) * 100) for c, v in keys_map.items()]
+            # xlabel = ['{}\n{:.2f}%'.format(c, (keys_map_occurrence[v] / total) * 100) for c, v in keys_map.items()]
+            xlabel = ['{}'.format(c) for c, v in keys_map.items()]
             plt.xticks(x, xlabel, rotation=45)
             plt.savefig(os.path.join(self.log_dir, 'score_varying_sent_len.png'), bbox_inches='tight')
             plt.close()
 
         self.load(best_one=True)
-        
+
         score_per_lengts = dict()
         distance_from_predicate_scores = dict()
         pos_scores = dict()
@@ -366,7 +399,7 @@ class MLP:
         sentences_length = []
 
         for batch in self.dataset.get_all_dataset('dev', batch=self.hyper['batch_size']):
-            
+
             (_, pos_index, predicate_index, labels, lengths, _, _) = batch
             feed = self.batch_to_feed(batch, training=False)
             val = self._session.run(self.prediction, feed_dict=feed)
@@ -378,7 +411,7 @@ class MLP:
                 sentences_length.append(sent_len)
                 pred_len = score_per_lengts.get(sent_len, defaultdict(int))
                 b_pred_index = predicate_index[b]
-                
+
                 for ts in np.arange(sent_len):
                     p = val[b][ts]
                     g = y[b][ts]
@@ -387,10 +420,7 @@ class MLP:
                     distances_from_predicate.append(dis)
                     pred_dis = distance_from_predicate_scores.get(dis, defaultdict(int))
 
-                    # if 'VV' or 'NN' in pos_dictionary[pos_index[b][ts]]:
-                    # pred_pos = pos_scores.get(pos_index[b][ts], defaultdict(int))
-
-                    super_role = 'OT'
+                    super_role = 'NULL'
                     if 'A0' in role_dictionary[g]:
                         super_role = 'A0'
                     elif 'A1' in role_dictionary[g]:
@@ -400,7 +430,7 @@ class MLP:
                     elif 'AM' in role_dictionary[g]:
                         super_role = 'AM'
 
-                    pred_pos = pos_scores.get(pos_dictionary[pos_index[b][ts]]+'-'+super_role, defaultdict(int))
+                    pred_pos = pos_scores.get(pos_dictionary[pos_index[b][ts]] + '-' + super_role, defaultdict(int))
 
                     confusion_matrix[g, p] += 1
                     confusion_matrix[p, g] += 1
@@ -417,66 +447,48 @@ class MLP:
                             pred_len['correct_labeled'] += 1
                             pred_dis['correct_labeled'] += 1
                             pred_pos['correct_labeled'] += 1
-                        # elif g != self.null:
 
                     if g != self.null:
                         pred_len['gold'] += 1
                         pred_dis['gold'] += 1
                         pred_pos['gold'] += 1
 
-                        # num_gold += 1
                     distance_from_predicate_scores[dis] = pred_dis
-                    pos_scores[pos_dictionary[pos_index[b][ts]]+'-'+super_role] = pred_pos
+                    pos_scores[pos_dictionary[pos_index[b][ts]] + '-' + super_role] = pred_pos
 
                 score_per_lengts[sent_len] = pred_len
 
         distances_from_predicate = Counter(distances_from_predicate)
         sentences_length = Counter(sentences_length)
 
-        print()
-
-        print('score per lenght')
         save_len_plot(score_per_lengts)
-
-        for k, v in score_per_lengts.items():
-            if len(v) == 0:
-                continue
-            p, r, f1 = calculate_score(v)
-            print(k, end=': ')
-            print('precision', p, 'recall', r, 'f1', f1)
-
-        ################################################################################################
-        print()
-        print('distance_from_predicate_scores')
         save_distance_plot(distance_from_predicate_scores)
 
         print('pos scores')
-        subset = {'VB': defaultdict(int), 'NN': defaultdict(int)}
-
-        # NN = defaultdict(int)
+        subset = {}
         for k, v in pos_scores.items():
-            print(k, 'VB' in k)
-            if 'VB' not in k and 'NN' not in k :
-                continue
-            print(k)
+            key = k[:2]
+            if key not in subset:
+                subset[key] = {'A0': defaultdict(int), 'A1': defaultdict(int), 'A2': defaultdict(int),
+                               'AM': defaultdict(int), 'NULL': defaultdict(int)}
 
-            key = 'VB'
-            if 'NN' in k:
-                key = 'NN'
+            subk = k[-2:] if 'NULL' not in k else 'NULL'
 
-            subset[key]['predicted'] += v['predicted']
-            subset[key]['correct_labeled'] += v['correct_labeled']
-            subset[key]['gold'] += v['gold']
-        print(subset)
+            subset[key][subk]['predicted'] += v['predicted']
+            subset[key][subk]['correct_labeled'] += v['correct_labeled']
+            subset[key][subk]['gold'] += v['gold']
 
         for k, v in subset.items():
-            p, r, f1 = calculate_score(v)
-
-            print(k, p, r, f1)
-
+            for k1, v1 in v.items():
+                p, r, f1 = calculate_score(v1)
+                print('{} & {:.2f} & {:.2f} & {:.2f}'.format(k1, p, r, f1) + ' \\\\ \cline{2-5}')
         save_confusion_matrix(gold, pred)
 
     def _build_net(self):
+        '''
+        The function that build the network
+        :return: loss, train operation and forward pass
+        '''
 
         batch_size = None
         num_words = None

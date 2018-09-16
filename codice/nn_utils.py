@@ -3,11 +3,17 @@ import tensorflow as tf
 ####################################################################################
 #LSTM
 ####################################################################################
-from docutils.nodes import attention
-from tensorflow import name_scope
 
 
-def lstm(x, cell, seq_len, backward=False, scope=None):
+def lstm(x, cell, seq_len, backward=False):
+    '''
+    unroll the lstm dybamically, backward or forward.
+    :param x: input data
+    :param cell: the cell to unroll
+    :param seq_len: the squance length of the data in x
+    :param backward: if the data shoul be passed backward
+    :return: the results of the pass
+    '''
 
     if backward:
         x = tf.reverse_sequence(input=x, seq_lengths=seq_len, seq_dim=1, batch_dim=0)
@@ -21,6 +27,15 @@ def lstm(x, cell, seq_len, backward=False, scope=None):
 
 
 def bidirectioal_lstm(x, size, seq_len, sum=False, cell_type='lstm'):
+    '''
+    create the bidirectional layer
+    :param x: input data
+    :param size: the cells of the layer
+    :param seq_len: the squance length of the data in x
+    :param sum: if the output of forward and backward should be summed together
+    :param cell_type: the cell type: lstm or gru
+    :return: the output of the layer
+    '''
 
     if cell_type == 'lstm':
         cell_fw = tf.nn.rnn_cell.BasicLSTMCell(num_units=size, state_is_tuple=True, name='fw')
@@ -53,7 +68,10 @@ def bidirectioal_lstm(x, size, seq_len, sum=False, cell_type='lstm'):
 
 
 def encoder(x, sizes, seq_len, final_out_dim, keep_prob=1.0, sum=False, cells_type='lstm', attention_layers=None,
-                 heads=None, use_intermediate_states=False, predicate_index=None, layers_type='rnn', ensemble=False):
+            heads=None, use_intermediate_states=False, predicate_index=None, layers_type='rnn', ensemble=False):
+    '''
+    Build up the decoder
+    '''
 
     mask = tf.sequence_mask(seq_len)
     mask = tf.expand_dims(tf.to_float(mask), -1)
@@ -145,104 +163,15 @@ def encoder(x, sizes, seq_len, final_out_dim, keep_prob=1.0, sum=False, cells_ty
 
     return out
 
-
-def lstm_encoder_attention(x, sizes, seq_len, keep_prob=1.0, sum=False, cells_type='lstm'):
-    if not isinstance(sizes, (list, tuple)):
-            sizes = [sizes]
-    out = x
-    with tf.name_scope('lstm_encoder'):
-        for l, c in enumerate(sizes):
-            with tf.name_scope('layer_{}'.format(l)):
-                out = bidirectioal_lstm(out, c, seq_len, sum, cell_type=cells_type)
-                out = tf.nn.dropout(out, keep_prob)
-
-                out = multihead_attention_layer(out, c*2, 16, keep_prob, layer=l)
-
-    return out
-
-
-def ensemble(x, sizes, seq_len, final_out_dim, keep_prob=1.0, sum=False, cells_type='lstm', attention_layers=None,
-                 heads=None, predicate_index=None):
-
-    mask = tf.sequence_mask(seq_len)
-    mask = tf.expand_dims(tf.to_float(mask), -1)
-
-    def get_predicate_emb(input):
-        assert mask is not None
-        shape = tf.shape(input)
-        idx = tf.stack([tf.range(shape[0], dtype=tf.int32),
-                        predicate_index], axis=1)
-
-        predicate_emb = tf.gather_nd(input, idx)
-        predicate_emb = tf.tile(tf.expand_dims(predicate_emb, 1),
-                                (1, shape[1], 1))
-        out = tf.concat([input, predicate_emb], axis=2)
-        out *= mask
-        return out
-
-    def layer_forward(x, layer_n):
-        if predicate_index is not None:
-            layer_out = get_predicate_emb(x)
-        else:
-            layer_out = x
-
-        with tf.device('/cpu:0'):
-            with tf.variable_scope('variables', reuse=tf.AUTO_REUSE):
-                w_out = tf.get_variable(name='out_weights_{}'.format(layer_n), shape=[layer_out.shape[-1], final_out_dim],
-                                        initializer=tf.contrib.layers.xavier_initializer())
-                tf.summary.histogram('out_weights_{}'.format(layer_n), w_out)
-
-        layer_out = batch_matmul(layer_out, w_out)
-        return layer_out
-
-    if attention_layers is None:
-        attention_layers = [0] * len(sizes)
-    else:
-        assert (mask is not None)
-
-        if isinstance(attention_layers, int):
-            zeros = [0] * len(sizes)
-            zeros[attention_layers] = 1
-            attention_layers = zeros
-
-        assert(len(attention_layers) == len(sizes))
-        if heads is None:
-            heads = 16
-
-    if not isinstance(sizes, (list, tuple)):
-            sizes = [sizes]
-
-    out = 0
-
-    with tf.name_scope('lstm_encoder'):
-        for l, c in enumerate(sizes):
-            with tf.variable_scope('layer_{}'.format(l)):
-                with tf.variable_scope('layer_{}'.format(l)):
-
-                    rnn_out = bidirectioal_lstm(x, c, seq_len, sum, cell_type=cells_type)
-                    c = c * 2
-                    rnn_out = tf.nn.dropout(rnn_out, keep_prob)
-
-                if attention_layers[l]:
-                    with tf.device('/cpu:0'):
-                        print(c)
-                        rnn_out = multihead_attention_layer(rnn_out, c, heads, keep_prob, l)
-
-                layer_out = layer_forward(rnn_out, l)
-                tf.summary.histogram('out_weights_{}'.format(l), layer_out)
-                out += layer_out
-
-    tf.summary.histogram("forward_output", out)
-
-    return out
-
-
 ####################################################################################
 #FFD
 ####################################################################################
 
 
 def ffn_layer(inputs, size):
+    '''
+    The FFW layer used instead of RNN
+    '''
     d = inputs.shape[-1]
     w = tf.get_variable(shape=[d, size], name='w1')
     b = tf.get_variable(shape=[size], name='b1')
@@ -266,6 +195,14 @@ def ffn_layer(inputs, size):
 
 
 def attention_head(q, k, v, d, keep_prob=1.0):
+    '''
+    A single attention head calculation
+    :param q: query
+    :param k: key
+    :param v: value
+    :param d: size of the head
+    :param keep_prob: drop out probability
+    '''
     num = tf.matmul(q, k, transpose_b=True) * (d ** -0.5)
     w = tf.nn.softmax(num, name="attention_weights")
     out = tf.matmul(w, v)
@@ -274,39 +211,10 @@ def attention_head(q, k, v, d, keep_prob=1.0):
     return out
 
 
-def attention_layer(x, d, keep_prob=1.0):
-    shape = x.get_shape()
-    with tf.name_scope('attention_layer'):
-        with tf.variable_scope('variables', reuse=tf.AUTO_REUSE):
-            with tf.device('/cpu:0'):
-
-                w_projector = tf.get_variable(shape=[shape[-1], d*3], name='projector_weights')
-                b_projector = tf.get_variable(shape=[d*3], name='projector_bias', initializer=tf.zeros_initializer)
-                wo_projector = tf.get_variable(shape=[d, shape[-1]], name='projector_weights_o')
-                bo_projector = tf.get_variable(shape=[shape[-1]], name='projector_bias_o',
-                                           initializer=tf.zeros_initializer)
-
-        tf.summary.histogram('projector_w', w_projector)
-        tf.summary.histogram('projector_b', b_projector)
-
-        tf.summary.histogram('projector_weights_o', wo_projector)
-        tf.summary.histogram('projector_bias_o', bo_projector)
-
-        proj = batch_matmul(x, w_projector, b_projector)
-
-        q, k, v = tf.split(proj, [d, d, d], axis=2)
-
-        with tf.name_scope('attention_head'):
-            out = attention_head(q, k, v, d, keep_prob=keep_prob)
-
-        out = batch_matmul(out, wo_projector, bo_projector)
-        out = x + out
-
-    return out
-
-
 def multihead_attention_layer(x, d, num_heads, keep_prob=1.0, layer=0):
-
+    '''
+    Multi head attention mechanism
+    '''
     def split_head(input):
         old_shape = tf.shape(input)
         new_shape = tf.concat([old_shape[:-1], [num_heads, d//num_heads]], -1)
@@ -368,6 +276,9 @@ def multihead_attention_layer(x, d, num_heads, keep_prob=1.0, layer=0):
 
 
 def batch_matmul(x, w, b=None):
+    '''
+    General matmul that works for n dimensions
+    '''
     with tf.name_scope('batch_matmul'):
         in_shapes = tf.shape(x)
         out_shape = tf.shape(w)

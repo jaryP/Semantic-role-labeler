@@ -5,6 +5,7 @@ from gensim.models import KeyedVectors
 import pickle
 import string
 from collections import  defaultdict
+import os
 
 
 WORD_DROP_SEED = 10
@@ -14,6 +15,9 @@ PUNT.extend(["''", "``", "-lrb-", "-rrb-"])
 
 
 class Dataset_nasari:
+    '''
+    This is the main dataset class. It builds and manage the dataset to be passed to the network.
+    '''
     def __init__(self, train_file, train_synsets, develop_file=None, develop_synset=None, w2v_emb=None, nasari_emb=None,
                  batch_size=32, wd=0.25):
 
@@ -56,10 +60,11 @@ class Dataset_nasari:
         np.random.shuffle(self.train_idx)
 
         self.develop_dataset, self.dev_indexes = self._create_dataset(develop_file, develop_synset)
-        # self.develop_idx = list(np.arange(len(self.dev_indexes)))
 
     def _get_dicts(self, file):
-
+        '''
+        Create the dictionaryes to map values to indexes. It is used only one time on train dataset
+        '''
         words = list()
         predicates = set()
         pos = set()
@@ -90,9 +95,6 @@ class Dataset_nasari:
                     pos.add(tokens[4])
 
                     word = tokens[2]
-
-                    # if word in PUNT:
-                    #     continue
 
                     try:
                         _ = float(word)
@@ -151,7 +153,9 @@ class Dataset_nasari:
         return m
 
     def _create_dataset(self, file, synset_file):
-
+        '''
+        Given a file and its associated disambiguated file build the dataset
+        '''
         sentences = []
         indexes = []
         all_roles = []
@@ -180,8 +184,6 @@ class Dataset_nasari:
                 else:
                     tokens = line.split()
                     word = tokens[2]
-                    # if word in PUNT:
-                    #     continue
                     try:
                         _ = float(word)
                         word = 'numeric'
@@ -247,20 +249,10 @@ class Dataset_nasari:
 
         return sent
 
-    def process_index(self, i, data_matrix=None, predicate_i=None,  dataset='train'):
-
-        # if dataset == 'train':
-        #     data_matrix_i, predicate_i, _ = self.train_indexes[i]
-        #     data_matrix = self.dataset[data_matrix_i]
-        # elif dataset == 'dev':
-        #     data_matrix_i, predicate_i, _ = self.dev_indexes[i]
-        #     data_matrix = self.develop_dataset[data_matrix_i]
-        # elif dataset == 'test':
-        #     data_matrix_i, predicate_i, _ = self.train_indexes[i]
-        #     data_matrix = self.develop_dataset[data_matrix_i]
-        # else:
-        #     assert False
-
+    def process_index(self, i, data_matrix=None, predicate_i=None):
+        '''
+        Process a given index to extract the single data in the batch
+        '''
         r, c = data_matrix.shape
         words_ids = data_matrix[:, 0]
         pos_ids = data_matrix[:, 1]
@@ -315,6 +307,9 @@ class Dataset_nasari:
         return data_matrix, word_emb, pos_emb, predicate_i, col, w2v, nasari
 
     def get_batch(self, idx, indexes, dataset):
+        '''
+        create and returns a batch given a dataset and a set of indexes
+        '''
         data_lengths = []
         w_emb = []
         p_emb = []
@@ -324,19 +319,6 @@ class Dataset_nasari:
         lemma_emb = []
 
         batch = len(idx)
-
-        # if dataset == 'train':
-        #     indexes = self.train_indexes
-        #     dataset = self.dataset
-        #     # data_matrix_i, predicate_i, _ = self.train_indexes[i]
-        #     # data_matrix = self.dataset[data_matrix_i]
-        # elif dataset == 'dev':
-        #     indexes = self.dev_indexes
-        #     dataset = self.develop_dataset
-        #     # data_matrix_i, predicate_i, _ = self.dev_indexes[i]
-        #     # data_matrix = self.develop_dataset[data_matrix_i]
-        # else:
-        #     assert False
 
         for i in idx:
             data_matrix_i, predicate_i, _ = indexes[i]
@@ -481,9 +463,13 @@ class Dataset_nasari:
             end += batch
             end = min(end, len(idxs))
 
-    def predict_test_data(self, model, path, dis_path):
+    def evaluate_test_data(self, model, path, dis_path):
+        '''
+        disambiguate the test dataset
+        '''
         sentences, indexes = self._create_dataset(path, dis_path)
         sentences_string = []
+        out_file = os.path.join(os.path.dirname(path), 'out.txt')
 
         with open(path) as f:
             com = []
@@ -491,19 +477,20 @@ class Dataset_nasari:
                 line = l.strip()
                 if len(line) == 0:
                     sentences_string.append(com)
-                    input(com)
                     com = []
                 else:
                     com.append(line.split('\t'))
-
+        print('Predictions...')
         d = defaultdict(list)
+        model.load(best_one=True)
+
         for i, batch in enumerate(self.get_all_dataset(dataset=(sentences, indexes), batch=1)):
             predictions = model.forward(batch)
-            d[indexes[i][0]].append(predictions)
+            d[indexes[i][0]].append(predictions[0])
 
-        model.load(best_one=True)
         id_roles_map = {v: k for k, v in self.role_id_map.items()}
-        f = lambda x: id_roles_map[x]
+        f = lambda x: '_' if id_roles_map[x] == 'NULL' else id_roles_map[x]
+        s = ''
 
         for i, str in enumerate(sentences_string):
             roles = None
@@ -513,16 +500,21 @@ class Dataset_nasari:
                 roles = list(zip(*roles))
 
             for l_n, line in enumerate(str):
-                s = '\t'.join(line)
+                s += '\t'.join(line)
                 if roles is not None:
+                    s += '\t'
                     s += '\t'.join(roles[l_n])
                 s += '\n'
-                print(s)
+            s += '\n'
 
-            input()
+        with open(out_file, "w") as f:
+            f.write(s)
 
 
 def extract_nasari(files, nasari_path, out_file='../embeddings/nasari.json'):
+    '''
+    Given a set of disambiguated files extract the nasari vectors
+    '''
     d = dict()
     d.update({'UNK': np.random.RandomState(0).randn(300)})
 
@@ -575,6 +567,9 @@ def extract_nasari(files, nasari_path, out_file='../embeddings/nasari.json'):
 
 
 def extract_w2v(files, w2v_path, out_file='../embeddings/w2v.json'):
+    '''
+    given the datasets extract the w2v vectors
+    '''
     lemmas = set()
     for f in files:
         with open(f, 'r') as file:
@@ -584,9 +579,6 @@ def extract_w2v(files, w2v_path, out_file='../embeddings/w2v.json'):
                     continue
                 else:
                     word = line.split()[2]
-
-                    # if word in PUNT:
-                    #     continue
 
                     try:
                         _ = float(word)
@@ -612,49 +604,3 @@ def extract_w2v(files, w2v_path, out_file='../embeddings/w2v.json'):
 
     with open(out_file, 'wb') as f:
         pickle.dump(d, f, protocol=pickle.HIGHEST_PROTOCOL)
-
-
-if __name__ == '__main__':
-    d = Dataset_nasari('../SRLData/EN/CoNLL2009-ST-English-train.txt', w2v_emb='../embeddings/w2v.json', nasari_emb='../embeddings/nasari.json',
-                develop_file='/media/jary/DATA/Uni/NLP/17-18/HWs/HW3/SRLData/EN/CoNLL2009-ST-English-development.txt',
-                train_synsets='../SRLData/EN/dis_CoNLL2009-ST-English-train.txt',
-                develop_synset= '/media/jary/DATA/Uni/NLP/17-18/HWs/HW3/SRLData/EN/dis_CoNLL2009-ST-English-development.txt')
-    d.predict_test_data('/media/jary/DATA/Uni/NLP/17-18/HWs/HW3/TestData/test.csv', '/media/jary/DATA/Uni/NLP/17-18/HWs/HW3/TestData/dis_test.csv')
-    exit()
-    # print(d.get_w2v_embeddings())
-    # exit()
-    lis = []
-    for e in range(20):
-        b = 0
-        for j, (w, p, im, y, lns, w2v, l) in enumerate(d.get_train_batch_incremental(20)):
-            # print(w2v)
-            # print(w.shape)
-            # print(w.shape)
-            pass
-            b += 1
-            # input()
-            # pass
-            # print(w, w.shape)
-            # print(p)
-            # print(i)
-            # print(lns)
-            # print(w2v)
-            # print(l, l.shape)
-        # lis.append({'e': e, 'b': b, 's': w.shape})
-        # print(lis)
-    # print(collections.Counter(lis).most_common())
-    # print(lis)
-    exit()
-    # #
-    # files = ['../SRLData/EN/CoNLL2009-ST-English-development.txt',
-    #          '../SRLData/EN/CoNLL2009-ST-English-train.txt',
-    #          '../TestData/test.csv']
-    # extract_w2v(files, '/home/jary/Scrivania/GoogleNews-vectors-negative300.bin.gz')
-
-    syns_files = [
-        '../SRLData/EN/dis_CoNLL2009-ST-English-development.txt',
-        '../SRLData/EN/dis_CoNLL2009-ST-English-train.txt',
-        '../TestData/dis_test.csv'
-    ]
-
-    extract_nasari(syns_files, '/home/jary/Scrivania/NASARI_embed_english.zip')

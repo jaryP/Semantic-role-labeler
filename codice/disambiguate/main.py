@@ -119,24 +119,8 @@ def disambiguate_file(g, file, synsets_relationship):
                 idx = [i for i, w in enumerate(s) if w[1] != '_']
                 keys = [s[i][1] for i in idx]
 
-                # if len(keys) == 0:
-                #     s = []
-                #     continue
-
                 all_sent.append(s)
                 all_keys.append(keys)
-                # dis = iter(dis[0])
-                #
-                # for i in range(len(s)):
-                #     if i in idx:
-                #         s[i] = s[i][0] + ' ' + next(dis)
-                #     else:
-                #         s[i] = s[i][0] + ' ' + '_'
-                #
-                # with open(out_file, "a") as f:
-                #     for l in s:
-                #         f.write(l+'\n')
-                #     f.write('\n')
 
                 s = []
                 continue
